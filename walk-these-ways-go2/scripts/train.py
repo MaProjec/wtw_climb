@@ -212,6 +212,9 @@ def train_go2(headless=True):
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
                       Cfg=vars(Cfg))
 
+    RunnerArgs.resume = True
+    RunnerArgs.resume_path = "/home/majunchi/ws_wtw_go2/walk-these-ways-go2/runs/gait-conditioned-agility/2025-11-28/train/155719.605790"
+    RunnerArgs.resume_curriculum = True
     env = HistoryWrapper(env)
     
     #gpu_id = 0

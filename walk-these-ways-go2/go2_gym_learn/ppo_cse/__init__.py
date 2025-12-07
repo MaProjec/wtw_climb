@@ -4,11 +4,16 @@ import copy
 import os
 
 import torch
+from torch.utils.tensorboard import SummaryWriter
+import numpy as np
+
 from ml_logger import logger
 from params_proto import PrefixProto
 
 from .actor_critic import ActorCritic
 from .rollout_storage import RolloutStorage
+
+from go2_gym import MINI_GYM_ROOT_DIR
 
 
 def class_to_dict(obj) -> dict:
@@ -67,6 +72,18 @@ class Runner:
         self.device = device
         self.env = env
 
+        # 新增：安全创建 TensorBoard writer（若不可用则禁用）
+        try:
+            tb_dir = os.path.join(MINI_GYM_ROOT_DIR, "logs", "tensorboard", time.strftime("%Y%m%d-%H%M%S"))
+            os.makedirs(tb_dir, exist_ok=True)
+            self.tb_writer = SummaryWriter(log_dir=tb_dir)
+            # counters for episode-based x-axis (increment per finished episode)
+            self._tb_train_ep_count = 0
+            self._tb_eval_ep_count = 0
+        except Exception as e:
+            print("Warning: TensorBoard SummaryWriter unavailable, disabling TB logging:", e)
+            self.tb_writer = None
+
         actor_critic = ActorCritic(self.env.num_obs,
                                       self.env.num_privileged_obs,
                                       self.env.num_obs_history,
@@ -74,21 +91,69 @@ class Runner:
                                       ).to(self.device)
 
         if RunnerArgs.resume:
-            # load pretrained weights from resume_path
-            from ml_logger import ML_Logger
-            loader = ML_Logger(root="http://escher.csail.mit.edu:8080",
-                               prefix=RunnerArgs.resume_path)
-            weights = loader.load_torch("checkpoints/ac_weights_last.pt")
-            actor_critic.load_state_dict(state_dict=weights)
+            # try to load pretrained weights from a local resume_path first (prefer local),
+            # otherwise fall back to ML_Logger remote loader
+            try:
+                loader = None
+                if RunnerArgs.resume_path is not None and os.path.exists(RunnerArgs.resume_path):
+                    # expect directory structure: <resume_path>/checkpoints/ac_weights_last.pt
+                    local_chk = os.path.join(RunnerArgs.resume_path, "checkpoints", "ac_weights_last.pt")
+                    if os.path.exists(local_chk):
+                        print(f"Resuming actor_critic from local checkpoint: {local_chk}")
+                        weights = torch.load(local_chk, map_location=self.device)
+                        actor_critic.load_state_dict(state_dict=weights)
+                    elif os.path.isfile(RunnerArgs.resume_path):
+                        # resume_path might be a direct checkpoint file
+                        print(f"Resuming actor_critic from local checkpoint file: {RunnerArgs.resume_path}")
+                        weights = torch.load(RunnerArgs.resume_path, map_location=self.device)
+                        actor_critic.load_state_dict(state_dict=weights)
+                    else:
+                        # fallback to remote loader
+                        from ml_logger import ML_Logger
+                        loader = ML_Logger(root="http://escher.csail.mit.edu:8080", prefix=RunnerArgs.resume_path)
+                        weights = loader.load_torch("checkpoints/ac_weights_last.pt")
+                        actor_critic.load_state_dict(state_dict=weights)
+                else:
+                    # no local path provided — try ML_Logger remote loader
+                    from ml_logger import ML_Logger
+                    loader = ML_Logger(root="http://escher.csail.mit.edu:8080", prefix=RunnerArgs.resume_path)
+                    weights = loader.load_torch("checkpoints/ac_weights_last.pt")
+                    actor_critic.load_state_dict(state_dict=weights)
 
-            if hasattr(self.env, "curricula") and RunnerArgs.resume_curriculum:
-                # load curriculum state
-                distributions = loader.load_pkl("curriculum/distribution.pkl")
-                distribution_last = distributions[-1]["distribution"]
-                gait_names = [key[8:] if key.startswith("weights_") else None for key in distribution_last.keys()]
-                for gait_id, gait_name in enumerate(self.env.category_names):
-                    self.env.curricula[gait_id].weights = distribution_last[f"weights_{gait_name}"]
-                    print(gait_name)
+                if hasattr(self.env, "curricula") and RunnerArgs.resume_curriculum:
+                    # load curriculum state: prefer a local pkl when resuming from local path,
+                    # otherwise use the remote loader if available
+                    distributions = None
+                    try:
+                        if RunnerArgs.resume_path is not None and os.path.exists(RunnerArgs.resume_path):
+                            local_pkl = os.path.join(RunnerArgs.resume_path, "curriculum", "distribution.pkl")
+                            if os.path.exists(local_pkl):
+                                try:
+                                    import pickle
+                                    with open(local_pkl, "rb") as f:
+                                        distributions = pickle.load(f)
+                                        print(f"Loaded curriculum distributions from local pkl: {local_pkl}")                                        
+                                except Exception:
+                                    distributions = None
+                        # if not loaded from local, try remote loader (if set)
+                        if distributions is None and 'loader' in locals() and loader is not None:
+                            try:
+                                distributions = loader.load_pkl("curriculum/distribution.pkl")
+                            except Exception:
+                                distributions = None
+
+                        if distributions:
+                            distribution_last = distributions[-1]["distribution"]
+                            for gait_id, gait_name in enumerate(self.env.category_names):
+                                key = f"weights_{gait_name}"
+                                if key in distribution_last:
+                                    self.env.curricula[gait_id].weights = distribution_last[key]
+                                    print(gait_name)
+                    except Exception:
+                        # be conservative: if anything goes wrong, skip curriculum restore
+                        pass
+            except Exception as e:
+                print("Warning: could not resume from checkpoint:", e)
 
         self.alg = PPO(actor_critic, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
@@ -110,6 +175,17 @@ class Runner:
         assert logger.prefix, "you will overwrite the entire instrument server"
 
         logger.start('start', 'epoch', 'episode', 'run', 'step')
+
+        # helper: 把可能是 tensor 或 numpy 的值转成 Python float（失败返回 None）
+        def _to_scalar(x):
+            try:
+                if torch.is_tensor(x):
+                    return x.item()
+                if isinstance(x, (np.ndarray, np.generic)):
+                    return float(x)
+                return float(x)
+            except Exception:
+                return None
 
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf,
@@ -156,10 +232,34 @@ class Runner:
                     if 'train/episode' in infos:
                         with logger.Prefix(metrics="train/episode"):
                             logger.store_metrics(**infos['train/episode'])
+                        # 写入 TensorBoard: 将 infos['train/episode'] 中的标量逐个写入
+                        if self.tb_writer is not None:
+                            try:
+                                for k, v in infos['train/episode'].items():
+                                    if hasattr(v, "item"):
+                                        val = float(v.item())
+                                    else:
+                                        val = float(v)
+                                    self.tb_writer.add_scalar(f"train/episode/{k}", val, self._tb_train_ep_count)
+                                self._tb_train_ep_count += 1
+                            except Exception:
+                                pass
 
                     if 'eval/episode' in infos:
                         with logger.Prefix(metrics="eval/episode"):
                             logger.store_metrics(**infos['eval/episode'])
+                        # 写入 TensorBoard: eval episode
+                        if self.tb_writer is not None:
+                            try:
+                                for k, v in infos['eval/episode'].items():
+                                    if hasattr(v, "item"):
+                                        val = float(v.item())
+                                    else:
+                                        val = float(v)
+                                    self.tb_writer.add_scalar(f"eval/episode/{k}", val, self._tb_eval_ep_count)
+                                self._tb_eval_ep_count += 1
+                            except Exception:
+                                pass
 
                     if 'curriculum' in infos:
 
@@ -219,6 +319,22 @@ class Runner:
                 mean_adaptation_module_test_loss=mean_adaptation_module_test_loss
             )
 
+            # 写入 TensorBoard: 把主要训练指标以 iteration 为 x 轴记录
+            if self.tb_writer is not None:
+                try:
+                    self.tb_writer.add_scalar('train/time_elapsed', _to_scalar(logger.since('start')), it)
+                    self.tb_writer.add_scalar('train/time_iter', _to_scalar(logger.split('epoch')), it)
+                    self.tb_writer.add_scalar('train/adaptation_loss', _to_scalar(mean_adaptation_module_loss), it)
+                    self.tb_writer.add_scalar('train/mean_value_loss', _to_scalar(mean_value_loss), it)
+                    self.tb_writer.add_scalar('train/mean_surrogate_loss', _to_scalar(mean_surrogate_loss), it)
+                    self.tb_writer.add_scalar('train/mean_decoder_loss', _to_scalar(mean_decoder_loss), it)
+                    self.tb_writer.add_scalar('train/mean_decoder_loss_student', _to_scalar(mean_decoder_loss_student), it)
+                    self.tb_writer.add_scalar('train/mean_decoder_test_loss', _to_scalar(mean_decoder_test_loss), it)
+                    self.tb_writer.add_scalar('train/mean_decoder_test_loss_student', _to_scalar(mean_decoder_test_loss_student), it)
+                    self.tb_writer.add_scalar('train/mean_adaptation_module_test_loss', _to_scalar(mean_adaptation_module_test_loss), it)
+                except Exception:
+                    pass
+
             if RunnerArgs.save_video_interval:
                 self.log_video(it)
 
@@ -272,6 +388,13 @@ class Runner:
 
             logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/", once=False)
             logger.upload_file(file_path=body_path, target_path=f"checkpoints/", once=False)
+
+        # 关闭 TensorBoard writer（如果存在）
+        if hasattr(self, 'tb_writer') and self.tb_writer is not None:
+            try:
+                self.tb_writer.close()
+            except Exception:
+                pass
 
 
     def log_video(self, it):

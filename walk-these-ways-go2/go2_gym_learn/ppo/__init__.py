@@ -4,9 +4,12 @@ import time
 from collections import deque
 
 import torch
+import numpy as np
+from torch.utils.tensorboard import SummaryWriter
+
 from ml_logger import logger
 from params_proto import PrefixProto
-import os
+import os, time
 import copy
 
 from .actor_critic import ActorCritic
@@ -69,12 +72,45 @@ class Runner:
 
         self.device = device
         self.env = env
+        
+        # 新增：TensorBoard writer
+        tb_dir = os.path.join(MINI_GYM_ROOT_DIR, "logs", "tensorboard", time.strftime("%Y%m%d-%H%M%S"))
+        self.tb_writer = SummaryWriter(log_dir=tb_dir)  
 
         actor_critic = ActorCritic(self.env.num_obs,
                                       self.env.num_privileged_obs,
                                       self.env.num_obs_history,
                                       self.env.num_actions,
                                       ).to(self.device)
+        # 尝试从本地或远程恢复已有模型权重（优先本地）
+        if RunnerArgs.resume:
+            try:
+                if RunnerArgs.resume_path is not None and os.path.exists(RunnerArgs.resume_path):
+                    # 期待目录结构: <resume_path>/checkpoints/ac_weights_last.pt
+                    local_chk = os.path.join(RunnerArgs.resume_path, "checkpoints", "ac_weights_last.pt")
+                    if os.path.exists(local_chk):
+                        print(f"Resuming actor_critic from local checkpoint: {local_chk}")
+                        weights = torch.load(local_chk, map_location=self.device)
+                        actor_critic.load_state_dict(state_dict=weights)
+                    elif os.path.isfile(RunnerArgs.resume_path):
+                        print(f"Resuming actor_critic from local checkpoint file: {RunnerArgs.resume_path}")
+                        weights = torch.load(RunnerArgs.resume_path, map_location=self.device)
+                        actor_critic.load_state_dict(state_dict=weights)
+                    else:
+                        # fallback to remote ML_Logger loader using resume_path as prefix
+                        from ml_logger import ML_Logger
+                        loader = ML_Logger(root="http://escher.csail.mit.edu:8080", prefix=RunnerArgs.resume_path)
+                        weights = loader.load_torch("checkpoints/ac_weights_last.pt")
+                        actor_critic.load_state_dict(state_dict=weights)
+                else:
+                    # no local path provided — try ML_Logger remote loader
+                    from ml_logger import ML_Logger
+                    loader = ML_Logger(root="http://escher.csail.mit.edu:8080", prefix=RunnerArgs.resume_path)
+                    weights = loader.load_torch("checkpoints/ac_weights_last.pt")
+                    actor_critic.load_state_dict(state_dict=weights)
+            except Exception as e:
+                print("Warning: failed to resume model:", e)
+
         self.alg = PPO(actor_critic, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
 
@@ -210,6 +246,25 @@ class Runner:
                 mean_surrogate_loss=mean_surrogate_loss
             )
 
+            # 新增：写入 TensorBoard 标量
+            try:
+                self.tb_writer.add_scalar("train/mean_value_loss", float(mean_value_loss), it)
+                self.tb_writer.add_scalar("train/mean_surrogate_loss", float(mean_surrogate_loss), it)
+                self.tb_writer.add_scalar("train/adaptation_loss", float(mean_adaptation_module_loss), it)
+
+                # 从缓冲区记录 episodic reward/length 的均值
+                if len(rewbuffer) > 0:
+                    self.tb_writer.add_scalar("train/episode_reward", float(np.mean(rewbuffer)), it)
+                if len(lenbuffer) > 0:
+                    self.tb_writer.add_scalar("train/episode_length", float(np.mean(lenbuffer)), it)
+                if len(rewbuffer_eval) > 0:
+                    self.tb_writer.add_scalar("eval/episode_reward", float(np.mean(rewbuffer_eval)), it)
+                if len(lenbuffer_eval) > 0:
+                    self.tb_writer.add_scalar("eval/episode_length", float(np.mean(lenbuffer_eval)), it)
+            except Exception as e:
+                # 不要因 tensorboard 错误中断训练
+                print("TensorBoard logging failed:", e)
+
             if RunnerArgs.save_video_interval:
                 self.log_video(it)
 
@@ -263,6 +318,13 @@ class Runner:
 
             logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/", once=False)
             logger.upload_file(file_path=body_path, target_path=f"checkpoints/", once=False)
+        
+        # 训练结束后，确保关闭 writer
+        try:
+            if self.tb_writer is not None:
+                self.tb_writer.close()
+        except Exception:
+            pass    
 
     def log_video(self, it):
         if it - self.last_recording_it >= RunnerArgs.save_video_interval:
