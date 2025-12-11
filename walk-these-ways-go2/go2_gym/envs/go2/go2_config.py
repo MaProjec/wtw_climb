@@ -76,6 +76,9 @@ def config_go2(Cnfg: Union[Cfg, Meta]):
     _ = Cnfg.commands
     _.lin_vel_x = [-1.0, 1.0]
     _.lin_vel_y = [-1.0, 1.0]
+    _.gaitwise_curricula = True
+    # 只训练这两个步态
+    _.enabled_gaits = ['trot', 'pace']
 
     _ = Cnfg.commands
     _.heading_command = False

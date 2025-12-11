@@ -207,6 +207,7 @@ def train_go2(headless=True):
     Cfg.commands.pacing_offset = False
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
+    Cfg.commands.enabled_gaits = enabled_gaits = ['trot', 'pace']
 
     env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
     #env = VelocityTrackingEasyEnv(sim_device='cuda:7', headless=True, cfg=Cfg)

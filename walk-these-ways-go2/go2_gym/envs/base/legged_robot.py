@@ -1328,7 +1328,18 @@ class LeggedRobot(BaseTask):
         # new style curriculum
         self.category_names = ['nominal']
         if self.cfg.commands.gaitwise_curricula:
-            self.category_names = ['pronk', 'trot', 'pace', 'bound']
+            #self.category_names = ['pronk', 'trot', 'pace', 'bound']
+            all_gaits = ['pronk', 'trot', 'pace', 'bound']
+            enabled = getattr(self.cfg.commands, "enabled_gaits", None)
+            if enabled is None:
+                # 默认使用全部四个
+                self.category_names = all_gaits
+            else:
+                # 只保留合法且启用的步态（保持顺序）
+                self.category_names = [g for g in all_gaits if g in enabled]
+                # 如果过滤后为空，回退到 nominal（避免后续代码出错）
+                if len(self.category_names) == 0:
+                    self.category_names = ['nominal']
 
         if self.cfg.commands.curriculum_type == "RewardThresholdCurriculum":
             from .curriculum import RewardThresholdCurriculum
