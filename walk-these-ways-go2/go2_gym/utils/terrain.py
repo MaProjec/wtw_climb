@@ -122,6 +122,8 @@ class Terrain:
         discrete_obstacles_height = 0.05 + difficulty * (cfg.max_platform_height - 0.05)
         stepping_stones_size = 1.5 * (1.05 - difficulty)
         stone_distance = 0.05 if difficulty == 0 else 0.1
+        gap_size = 1. * difficulty
+        pit_depth = 1. * difficulty
         if choice < proportions[0]:
             if choice < proportions[0] / 2:
                 slope *= -1
@@ -144,9 +146,11 @@ class Terrain:
             terrain_utils.stepping_stones_terrain(terrain, stone_size=stepping_stones_size,
                                                   stone_distance=stone_distance, max_height=0., platform_size=4.)
         elif choice < proportions[6]:
-            pass
+            #pass
+            gap_terrain(terrain, gap_size=gap_size, platform_size=3.)
         elif choice < proportions[7]:
-            pass
+            #pass
+            pit_terrain(terrain, depth=pit_depth, platform_size=4.)
         elif choice < proportions[8]:
             terrain_utils.random_uniform_terrain(terrain, min_height=-cfg.terrain_noise_magnitude,
                                                  max_height=cfg.terrain_noise_magnitude, step=0.005,
@@ -174,7 +178,30 @@ class Terrain:
         x2 = int((cfg.terrain_length / 2. + 1) / terrain.horizontal_scale) + cfg.x_offset
         y1 = int((cfg.terrain_width / 2. - 1) / terrain.horizontal_scale)
         y2 = int((cfg.terrain_width / 2. + 1) / terrain.horizontal_scale)
-        env_origin_z = np.max(self.height_field_raw[start_x: end_x, start_y:end_y]) * terrain.vertical_scale
-
+        #env_origin_z = np.max(self.height_field_raw[start_x: end_x, start_y:end_y]) * terrain.vertical_scale
+        env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale
         cfg.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
+
+def gap_terrain(terrain, gap_size, platform_size=1.):
+    gap_size = int(gap_size / terrain.horizontal_scale)
+    platform_size = int(platform_size / terrain.horizontal_scale)
+
+    center_x = terrain.length // 2
+    center_y = terrain.width // 2
+    x1 = (terrain.length - platform_size) // 2
+    x2 = x1 + gap_size
+    y1 = (terrain.width - platform_size) // 2
+    y2 = y1 + gap_size
+   
+    terrain.height_field_raw[center_x-x2 : center_x + x2, center_y-y2 : center_y + y2] = -1000
+    terrain.height_field_raw[center_x-x1 : center_x + x1, center_y-y1 : center_y + y1] = 0
+
+def pit_terrain(terrain, depth, platform_size=1.):
+    depth = int(depth / terrain.vertical_scale)
+    platform_size = int(platform_size / terrain.horizontal_scale / 2)
+    x1 = terrain.length // 2 - platform_size
+    x2 = terrain.length // 2 + platform_size
+    y1 = terrain.width // 2 - platform_size
+    y2 = terrain.width // 2 + platform_size
+    terrain.height_field_raw[x1:x2, y1:y2] = -depth
 

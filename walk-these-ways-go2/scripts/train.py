@@ -96,15 +96,18 @@ def train_go2(headless=True):
     Cfg.terrain.border_size = 0.0
     # Default value = "trimesh"
     Cfg.terrain.mesh_type = "trimesh"  # "heightfield" # none, plane, heightfield or trimesh
+    Cfg.terrain.terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
     Cfg.terrain.num_cols = 30
     Cfg.terrain.num_rows = 30
-    Cfg.terrain.terrain_width = 1.0 # 5.0
-    Cfg.terrain.terrain_length = 1.0 # 5.0
+    Cfg.terrain.terrain_width = 8.0 # 5.0
+    Cfg.terrain.terrain_length = 8.0 # 5.0
     Cfg.terrain.x_init_range = 0.2
     Cfg.terrain.y_init_range = 0.2
     Cfg.terrain.teleport_thresh = 0.3
+    # 是否将超出地图边界的机器人传送到地图另一端
     Cfg.terrain.teleport_robots = False
-    Cfg.terrain.center_robots = True
+    # 是否将机器人初始位置设置在地图中心
+    Cfg.terrain.center_robots = False
     Cfg.terrain.center_span = 4
     Cfg.terrain.horizontal_scale = 0.10
     Cfg.rewards.use_terminal_foot_height = False
@@ -205,8 +208,8 @@ def train_go2(headless=True):
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
 
-    #env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
-    env = VelocityTrackingEasyEnv(sim_device='cuda:7', headless=True, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    #env = VelocityTrackingEasyEnv(sim_device='cuda:7', headless=True, cfg=Cfg)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
@@ -261,5 +264,5 @@ if __name__ == '__main__':
                 """, filename=".charts.yml", dedent=True)
 
     # to see the environment rendering, set headless=False
-    # train_go2(headless=False)
-    train_go2()
+    train_go2(headless=False)
+    #train_go2()
