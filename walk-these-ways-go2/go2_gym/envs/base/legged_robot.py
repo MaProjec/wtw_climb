@@ -159,6 +159,10 @@ class LeggedRobot(BaseTask):
 
         if len(env_ids) == 0:
             return
+        
+        # update curriculum
+        if self.cfg.terrain.curriculum:
+            self._update_terrain_curriculum(env_ids,self.cfg)
 
         # reset robot states
         self._resample_commands(env_ids)
@@ -1024,6 +1028,30 @@ class LeggedRobot(BaseTask):
             self.root_states[env_ids, 7:9] = torch_rand_float(-max_vel, max_vel, (len(env_ids), 2),
                                                               device=self.device)  # lin vel x/y
             self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
+
+
+    def _update_terrain_curriculum(self, env_ids, cfg):
+        """ Implements the game-inspired curriculum.
+
+        Args:
+            env_ids (List[int]): ids of environments being reset
+        """
+        # Implement Terrain curriculum
+        if not self.init_done:
+            # don't change on initial reset
+            return
+        distance = torch.norm(self.root_states[env_ids, :2] - self.env_origins[env_ids, :2], dim=1)
+        # robots that walked far enough progress to harder terains
+        move_up = distance > cfg.terrain.terrain_length / 2
+        # robots that walked less than half of their required distance go to simpler terrains
+        max_episode_length_s = cfg.env.episode_length_s
+        move_down = (distance < torch.norm(self.commands[env_ids, :2], dim=1)*max_episode_length_s*0.5) * ~move_up
+        self.terrain_levels[env_ids] += 1 * move_up - 1 * move_down
+        # Robots that solve the last level are sent to a random one
+        self.terrain_levels[env_ids] = torch.where(self.terrain_levels[env_ids]>=cfg.terrain.max_terrain_level,
+                                                   torch.randint_like(self.terrain_levels[env_ids], cfg.terrain.max_terrain_level),
+                                                   torch.clip(self.terrain_levels[env_ids], 0)) # (the minumum level is zero)
+        self.env_origins[env_ids] = cfg.terrain.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
 
     def _teleport_robots(self, env_ids, cfg):
         """ Teleports any robots that are too close to the edge to the other side

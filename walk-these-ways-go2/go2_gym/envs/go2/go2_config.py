@@ -60,13 +60,13 @@ def config_go2(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.terrain
     _.mesh_type = 'trimesh'
-    _.measure_heights = False
+    _.measure_heights = True
     _.terrain_noise_magnitude = 0.0
     _.teleport_robots = True
     _.border_size = 50
 
     _.terrain_proportions = [0, 0, 0, 0, 0, 0, 0, 0, 1.0]
-    _.curriculum = False
+    _.curriculum = True
 
     _ = Cnfg.env
     _.num_observations = 42
