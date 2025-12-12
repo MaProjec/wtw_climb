@@ -60,6 +60,7 @@ class Cfg(PrefixProto, cli=False):
         priv_observe_halftime_clock_inputs = False
         priv_observe_desired_contact_states = False
         priv_observe_dummy_variable = False
+        priv_observe_measured_heights = False # only for heightfield/trimesh terrains
 
     class terrain(PrefixProto, cli=False):
         mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh

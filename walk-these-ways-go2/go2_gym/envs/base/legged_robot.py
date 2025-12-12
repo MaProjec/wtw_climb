@@ -491,6 +491,12 @@ class LeggedRobot(BaseTask):
             self.privileged_obs_buf = torch.cat((self.privileged_obs_buf,
                                                  self.desired_contact_states), dim=-1)
 
+        # measured heights as privileged observation (if enabled)
+        if getattr(self.cfg.env, "priv_observe_measured_heights", False) and self.cfg.terrain.measure_heights:
+            heights_rel = torch.clip(self.root_states[:self.num_envs, 2].unsqueeze(1) - 0.5 - self.measured_heights,
+                                    -1., 1.) * self.obs_scales.height_measurements
+            self.privileged_obs_buf = torch.cat((self.privileged_obs_buf, heights_rel), dim=1)
+            self.next_privileged_obs_buf = torch.cat((self.next_privileged_obs_buf, heights_rel), dim=1)
         assert self.privileged_obs_buf.shape[
                    1] == self.cfg.env.num_privileged_obs, f"num_privileged_obs ({self.cfg.env.num_privileged_obs}) != the number of privileged observations ({self.privileged_obs_buf.shape[1]}), you will discard data from the student!"
 
@@ -1769,6 +1775,45 @@ class LeggedRobot(BaseTask):
         cfg.domain_rand.gravity_rand_interval = np.ceil(cfg.domain_rand.gravity_rand_interval_s / self.dt)
         cfg.domain_rand.gravity_rand_duration = np.ceil(
             cfg.domain_rand.gravity_rand_interval * cfg.domain_rand.gravity_impulse_duration)
+        # --- 自动计算需要的 privileged obs 维度（基于开启的 priv_observe_* 开关） ---
+        num_priv = 0
+        e = cfg.env
+        if getattr(e, "priv_observe_friction", False):
+            num_priv += 1
+        if getattr(e, "priv_observe_ground_friction", False):
+            num_priv += 1
+        if getattr(e, "priv_observe_restitution", False):
+            num_priv += 1
+        if getattr(e, "priv_observe_base_mass", False):
+            num_priv += 1
+        if getattr(e, "priv_observe_com_displacement", False):
+            num_priv += 3
+        if getattr(e, "priv_observe_motor_strength", False):
+            num_priv += 1
+        per_dof = getattr(cfg.env, "num_actions", None) or cfg.env.num_actions
+        if getattr(e, "priv_observe_motor_offset", False):
+            num_priv += int(per_dof)
+        # 在compute_privileged_obs中没有使用这些信息，暂时注释掉
+        # if getattr(e, "priv_observe_joint_friction", False):
+        #     num_priv += int(per_dof)
+        # if getattr(e, "priv_observe_Kp_factor", False):
+        #     num_priv += int(per_dof)
+        # if getattr(e, "priv_observe_Kd_factor", False):
+        #     num_priv += int(per_dof)
+        if getattr(e, "priv_observe_body_height", False):
+            num_priv += 1
+        if getattr(e, "priv_observe_body_velocity", False):
+            num_priv += 3
+        if getattr(e, "priv_observe_gravity", False):
+            num_priv += 3
+        if getattr(e, "priv_observe_clock_inputs", False):
+            num_priv += 4
+        if getattr(e, "priv_observe_foot_height", False):
+            num_priv += 4
+        if getattr(e, "priv_observe_measured_heights", False) and cfg.terrain.measure_heights:
+            num_height_points = len(cfg.terrain.measured_points_x) * len(cfg.terrain.measured_points_y)
+            num_priv += int(num_height_points)
+        cfg.env.num_privileged_obs = int(num_priv)
 
     def _draw_debug_vis(self):
         """ Draws visualizations for dubugging (slows down simulation a lot).

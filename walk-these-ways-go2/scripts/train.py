@@ -68,14 +68,15 @@ def train_go2(headless=True):
     Cfg.env.priv_observe_Kp_factor = False
     Cfg.domain_rand.randomize_Kd_factor = False
     Cfg.env.priv_observe_Kd_factor = False
-    Cfg.env.priv_observe_body_velocity = False
-    Cfg.env.priv_observe_body_height = False
+    Cfg.env.priv_observe_body_velocity = True
+    Cfg.env.priv_observe_body_height = True
     Cfg.env.priv_observe_desired_contact_states = False
     Cfg.env.priv_observe_contact_forces = False
     Cfg.env.priv_observe_foot_displacement = False
     Cfg.env.priv_observe_gravity_transformed_foot_displacement = False
+    Cfg.env.priv_observe_measured_heights = True # messure terrain height only for heightfield/trimesh terrains
 
-    Cfg.env.num_privileged_obs = 2
+    #Cfg.env.num_privileged_obs = 2  #自动适应
     Cfg.env.num_observation_history = 30
     Cfg.reward_scales.feet_contact_forces = 0.0
 
@@ -158,12 +159,12 @@ def train_go2(headless=True):
     Cfg.commands.lin_vel_y = [-0.6, 0.6]
     Cfg.commands.ang_vel_yaw = [-1.0, 1.0]
     Cfg.commands.body_height_cmd = [-0.25, 0.15]
-    Cfg.commands.gait_frequency_cmd_range = [2.0, 4.0]
+    Cfg.commands.gait_frequency_cmd_range = [1.2, 1.6] #步频
     Cfg.commands.gait_phase_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_offset_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_bound_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_duration_cmd_range = [0.5, 0.5]
-    Cfg.commands.footswing_height_range = [0.03, 0.35]
+    Cfg.commands.footswing_height_range = [0.03, 0.20]  #抬腿高度
     Cfg.commands.body_pitch_range = [-0.4, 0.4]
     Cfg.commands.body_roll_range = [-0.0, 0.0]
     Cfg.commands.stance_width_range = [0.10, 0.45]
@@ -173,12 +174,12 @@ def train_go2(headless=True):
     Cfg.commands.limit_vel_y = [-0.6, 0.6]
     Cfg.commands.limit_vel_yaw = [-5.0, 5.0]
     Cfg.commands.limit_body_height = [-0.25, 0.15]
-    Cfg.commands.limit_gait_frequency = [2.0, 4.0]
+    Cfg.commands.limit_gait_frequency = [1.2, 1.6]  #步频限制
     Cfg.commands.limit_gait_phase = [0.0, 1.0]
     Cfg.commands.limit_gait_offset = [0.0, 1.0]
     Cfg.commands.limit_gait_bound = [0.0, 1.0]
     Cfg.commands.limit_gait_duration = [0.5, 0.5]
-    Cfg.commands.limit_footswing_height = [0.03, 0.35]
+    Cfg.commands.limit_footswing_height = [0.03, 0.20]  #抬腿高度限制
     Cfg.commands.limit_body_pitch = [-0.4, 0.4]
     Cfg.commands.limit_body_roll = [-0.0, 0.0]
     Cfg.commands.limit_stance_width = [0.10, 0.45]
@@ -188,12 +189,12 @@ def train_go2(headless=True):
     Cfg.commands.num_bins_vel_y = 1
     Cfg.commands.num_bins_vel_yaw = 21
     Cfg.commands.num_bins_body_height = 1
-    Cfg.commands.num_bins_gait_frequency = 1
+    Cfg.commands.num_bins_gait_frequency = 1   #步频curriculum离散数量
     Cfg.commands.num_bins_gait_phase = 1
     Cfg.commands.num_bins_gait_offset = 1
     Cfg.commands.num_bins_gait_bound = 1
     Cfg.commands.num_bins_gait_duration = 1
-    Cfg.commands.num_bins_footswing_height = 1
+    Cfg.commands.num_bins_footswing_height = 1  #抬腿高度curriculum离散数量
     Cfg.commands.num_bins_body_roll = 1
     Cfg.commands.num_bins_body_pitch = 1
     Cfg.commands.num_bins_stance_width = 1
@@ -207,18 +208,19 @@ def train_go2(headless=True):
     Cfg.commands.pacing_offset = False
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
-    Cfg.commands.enabled_gaits = enabled_gaits = ['trot', 'pace']
+    Cfg.commands.enabled_gaits = ['trot', 'pace']
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
-    #env = VelocityTrackingEasyEnv(sim_device='cuda:7', headless=True, cfg=Cfg)
+    #env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:7', headless=True, cfg=Cfg)
+
+    RunnerArgs.resume = True
+    RunnerArgs.resume_path = "/home/majunchi/ws_wtw_go2/walk-these-ways-go2/runs/gait-conditioned-agility/2025-11-28/train/155719.605790"
+    RunnerArgs.resume_curriculum = False
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
                       Cfg=vars(Cfg))
 
-    RunnerArgs.resume = True
-    RunnerArgs.resume_path = "/home/majunchi/ws_wtw_go2/walk-these-ways-go2/runs/gait-conditioned-agility/2025-11-28/train/155719.605790"
-    RunnerArgs.resume_curriculum = True
     env = HistoryWrapper(env)
     
     #gpu_id = 0
@@ -265,5 +267,5 @@ if __name__ == '__main__':
                 """, filename=".charts.yml", dedent=True)
 
     # to see the environment rendering, set headless=False
-    train_go2(headless=False)
-    #train_go2()
+    #train_go2(headless=False)
+    train_go2()
